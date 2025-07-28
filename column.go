@@ -51,19 +51,18 @@ type ColumnInterface interface {
 }
 
 type BaseColumn struct {
-	name                string
-	dbName              string
-	oldName             string
-	sqlType             string
-	defaultString       string
-	isPointer           bool
-	isNullable          bool
-	isPrimaryKey        bool
-	isUnique            bool
-	isIndex             bool
-	isAllowZero         bool
-	tags                map[string]string
-	columnIndex         int
+	name          string
+	oldName       string
+	sqlType       string
+	defaultString string
+	isPointer     bool
+	isNullable    bool
+	isPrimaryKey  bool
+	isUnique      bool
+	isIndex       bool
+	isAllowZero   bool
+	tags          map[string]string
+	columnIndex   int
 }
 
 // Name returns the column name
@@ -113,7 +112,7 @@ func (c *BaseColumn) SetPrimaryKey(isPrimaryKey bool) {
 
 // IsString returns whether the column is a string type
 func (c *BaseColumn) IsString() bool {
-	return  false
+	return false
 }
 
 // IsDate returns whether the column is a date type
@@ -242,49 +241,49 @@ func (c *BaseColumn) IsCreatedAt() bool {
 	return false
 }
 
-func NewBaseColumn(name string, sqltype string, tagmap map[string]string, isPointer bool) BaseColumn{
+func NewBaseColumn(name string, sqltype string, tagmap map[string]string, isPointer bool) BaseColumn {
 	var v string
 	var ok bool
 	if v, ok = tagmap[TAG_NAME]; ok {
 		name = v
 	}
-	defaultStr:=""
+	defaultStr := ""
 	if v, ok = tagmap[TAG_DEFAULT]; ok {
 		defaultStr = v
 	}
-	isNullable:=true
+	isNullable := true
 	if v, ok = tagmap[TAG_NULLABLE]; ok {
-		b,_:=strconv.ParseBool(v)
+		b, _ := strconv.ParseBool(v)
 		isNullable = b
 	}
-	isPrimaryKey:=false
+	isPrimaryKey := false
 	if v, ok = tagmap[TAG_PRIMARY]; ok {
-		b,_:=strconv.ParseBool(v)
+		b, _ := strconv.ParseBool(v)
 		isPrimaryKey = b
 	}
-	isUnique:=false
+	isUnique := false
 	if v, ok = tagmap[TAG_UNIQUE]; ok {
-		b,_:=strconv.ParseBool(v)
+		b, _ := strconv.ParseBool(v)
 		isUnique = b
 	}
-	isIndex:=false
+	isIndex := false
 	if v, ok = tagmap[TAG_INDEX]; ok {
-		b,_:=strconv.ParseBool(v)
+		b, _ := strconv.ParseBool(v)
 		isIndex = b
 	}
 	if isPrimaryKey {
 		// If the column is a primary key, it cannot be nullable
 		isNullable = false
 	}
-	isAllowZero:=false
+	isAllowZero := false
 	if v, ok = tagmap[TAG_ALLOW_ZERO]; ok {
-		b,_:=strconv.ParseBool(v)
+		b, _ := strconv.ParseBool(v)
 		isAllowZero = b
 	}
 	return BaseColumn{
 		name:          name,
 		sqlType:       sqltype,
-		defaultString: defaultStr,		
+		defaultString: defaultStr,
 		isPointer:     isPointer,
 		isNullable:    isNullable,
 		isPrimaryKey:  isPrimaryKey,

@@ -1,7 +1,13 @@
 package aaronsql
 
+
+const (
+	DEFAULT_QUOTE_CHAR = "_"
+)
+
 // Column tags
 const (
+
 	// TAG_IGNORE indicates that the column should be ignored in sql operations
 	TAG_IGNORE	   = "ignore"
 	// TAG_NAME indicates the name of the column in the database
@@ -34,6 +40,10 @@ const (
 	TAG_ALLOW_ZERO = "allow_zero"
 	// TAG_EXTRA indicates extra information about the column
 	TAG_EXTRA      = "extra"
+	// TAG_DEFAULT_PART_QUOTE is used to quote the part in model tag
+	TAG_DEFAULT_PART_QUOTE = ";"
+	// TAG_DEFAULT_KEY_VALUE_QUOTE is used to separate key and value in model tag
+	TAG_DEFAULT_KEY_VALUE_QUOTE = "="
 )
 
 // SQL operations

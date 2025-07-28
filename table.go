@@ -1,6 +1,7 @@
 package aaronsql
 
 import (
+	"fmt"
 	"reflect"
 )
 
@@ -46,7 +47,9 @@ func (t *Table) Name() string {
 
 // Insert inserts a new record into the table.
 func (t *Table) Insert(dst interface{}) error {
-	panic("not implemented") // TODO: Implement
+	if !t.db.CanInsert() {
+		return fmt.Errorf("insert operation is not supported for database: %s", t.db.Name())
+	}
 }
 
 func (t *Table) InsertOrUpdate(dst interface{}) error {
@@ -105,7 +108,7 @@ func (t *Table) Sync() {
 }
 
 func (t *Table) DataBase() *DataBase {
-	return &t.db.DataBase
+	return t.db.GetDB()
 }
 
 func (t *Table) Drop() error {
@@ -120,28 +123,44 @@ func (t *Table) SetExtra(kvdata map[string]string) {
 	panic("not implemented") // TODO: Implement
 }
 
-
-
-func NewTableFromStructWithDB(s interface{}, name string, dbName string) *Table {
-	dbRefer:= globalDBInstances[dbName]
+func NewTableFromStructWithDB(s interface{}, name string, dbName string) (*Table, error) {
+	dbRefer := globalDBInstances[dbName]
 	if dbRefer == nil {
-		panic("Database instance not found for name: " + dbName)
+		return nil, fmt.Errorf("database instance for %s not found", dbName)
 	}
 	reflectType := reflect.TypeOf(s)
 	if reflectType.Kind() != reflect.Struct {
-		panic("Expected a struct type, got: " + reflectType.Kind().String())
+		return nil, fmt.Errorf("expected a struct type, got: %s", reflectType.Kind().String())
+	}
+	// get s tags
+	cols := make([]ColumnInterface, 0)
+	for i := 0; i < reflectType.NumField(); i++ {
+		tags := make(map[string]string)
+		field := reflectType.Field(i)
+		tagStr := field.Tag.Get(defaultModelDBTagKey)
+		if tagStr == "" {
+			continue
+		}
+		tags = parseTagString(tagStr)
+		if _, ok := tags[TAG_IGNORE]; ok {
+			continue // skip fields with ignore tag
+		}
+		// Create a new column based on the field information
+		col, err := globalDBInstances[dbName].GetColumnDefinitionByType(field.Type, field.Name, tags, field.Type.Kind() == reflect.Ptr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create column for field %s: %w", field.Name, err)
+		}
+		cols = append(cols, col)
 	}
 
 	table := &Table{
-		structType:  reflect.TypeOf(s),
-		name:        name,
-		columns:     make([]ColumnInterface, 0),
-		indexes:     make([]TableIndex, 0),
-		constraints: make([]TableForeignKey, 0),
+		structType:   reflect.TypeOf(s),
+		name:         name,
+		columns:      cols,
 		extraOptions: make(map[string]string),
-		db:          dbRefer,
+		db:           dbRefer,
 	}
-	return table
+	return table, nil
 }
 
 func (table *Table) addIndexWithName(name string, unique bool, cols ...string) bool {
