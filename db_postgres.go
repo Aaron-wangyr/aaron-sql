@@ -207,9 +207,66 @@ func (postgres *PostgresDataBase) InsertOrUpdateSqlTemplate() string {
 	return tpl
 }
 
-func (postgres *PostgresDataBase) TableSync(table TableInterface) error {
+func (postgres *PostgresDataBase) CanRenameTable() bool {
+	return true
+}
 
-	return nil
+func (postgres *PostgresDataBase) GetTableDDL(tableName string) (*Table, error) {
+	table := &Table{
+		name:        tableName,
+		columns:     make([]ColumnInterface, 0),
+		indexes:     make([]TableIndex, 0),
+		constraints: make([]TableForeignKey, 0),
+		db:          postgres,
+	}
+	columnMap := make(map[string]*PostgresColumn)
+	columnQuery := `
+		SELECT
+			column_name,
+			udt_name,
+			is_nullable,
+			column_default
+		FROM
+			information_schema.columns
+		WHERE
+			table_schema = $1 AND table_name = $2
+		ORDER BY
+			ordinal_position;
+	`
+	rows, err := postgres.db.Query(columnQuery, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var colName, dataType, isNullable, defaultValue string
+		if err := rows.Scan(&colName, &dataType, &isNullable, &defaultValue); err != nil {
+			return nil, err
+		}
+
+		column := &PostgresColumn{
+			BaseColumn: BaseColumn{
+				name:          colName,
+				sqlType:       dataType,
+				isNullable:    isNullable == "YES",
+				defaultString: defaultValue,
+			},
+		}
+		columnMap[colName] = column
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(columnMap) == 0 {
+		return nil, fmt.Errorf("no columns found for table %s", tableName)
+	}
+
+	table.columns = make([]ColumnInterface, 0, len(columnMap))
+	for _, col := range columnMap {
+		table.columns = append(table.columns, col)
+	}
+	return table, nil
 }
 
 func (postgres *PostgresDataBase) getTableNames() ([]string, error) {

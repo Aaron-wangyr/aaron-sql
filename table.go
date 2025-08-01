@@ -3,6 +3,8 @@ package aaronsql
 import (
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 )
 
 // TableInterface respresents the interface for table operations in the database.
@@ -21,12 +23,15 @@ type TableInterface interface {
 	Instance() *Table
 	DropForeignKeySql() string
 	AddIndex(unique bool, cols ...string) bool
-	SyncSql() []string
-	Sync()
+
 	DataBase() *DataBase
 	Drop() error
 	GetExtra() map[string]string
 	SetExtra(kvdata map[string]string)
+
+	GetDDL() string
+	SyncSql() []string
+	Sync()
 }
 
 type Table struct {
@@ -104,7 +109,7 @@ func (t *Table) SyncSql() []string {
 }
 
 func (t *Table) Sync() {
-	panic("not implemented") // TODO: Implement
+	t.db.getta
 }
 
 func (t *Table) DataBase() *DataBase {
@@ -160,6 +165,12 @@ func NewTableFromStructWithDB(s interface{}, name string, dbName string) (*Table
 		extraOptions: make(map[string]string),
 		db:           dbRefer,
 	}
+	if err := table.constructIndex(); err != nil {
+		return nil, fmt.Errorf("failed to construct indexes for table %s: %w", name, err)
+	}
+	if err := table.constructConstraints(); err != nil {
+		return nil, fmt.Errorf("failed to construct constraints for table %s: %w", name, err)
+	}
 	return table, nil
 }
 
@@ -176,4 +187,70 @@ func (table *Table) addIndexWithName(name string, unique bool, cols ...string) b
 
 func (ts *Table) AddIndex(unique bool, cols ...string) bool {
 	return ts.addIndexWithName("", unique, cols...)
+}
+
+// constructIndex constructs the indexes for the table based on the columns tags.
+// eg: db:"index:idx_name,unique".if two columns have the same index name, it's a composite index.
+// composite index will use priority to determine the index order. eg: db:"index:idx_name,priority:1".
+// support multiple indexes on the same column, but must with different index type. eg: db:"index:idx_name,priority:1;index:idx_name2,unique".
+func (t *Table) constructIndex() error {
+	indexs := make([]TableIndex, 0)
+	indexNameAndColsAndPriority := make(map[string]map[string]int)
+	for _, col := range t.columns {
+		tags := col.GetStructTags()
+		if indexTag, ok := tags[TAG_INDEX]; ok {
+			// If the index tag is present, we need to parse it
+			indexParts := strings.Split(indexTag, ",")
+			idxName := ""
+			priority := 0
+			for _, part := range indexParts {
+				if strings.HasPrefix(part, "priority:") {
+					// Extract priority value
+					priorityStr := strings.TrimPrefix(part, "priority:")
+					var err error
+					priority, err = strconv.Atoi(priorityStr)
+					if err != nil {
+						return fmt.Errorf("invalid priority value in index tag: %s", part)
+					}
+				} else {
+					// This is the index name
+					idxName = part
+				}
+			}
+			if idxName == "" {
+				idxName = col.Name() + "_index" // Default index name if not specified
+			}
+			indexNameAndColsAndPriority[idxName] = map[string]int{col.Name(): priority}
+		}
+		if uniqueTag, ok := tags[TAG_UNIQUE]; ok {
+			if uniqueTag == "true" || uniqueTag == "1" {
+				indexs = append(indexs, NewTableIndex(t, col.Name()+"_unique", []string{col.Name()}, true))
+			}
+		}
+	}
+	if len(indexNameAndColsAndPriority) != 0 {
+		for idxName, colMap := range indexNameAndColsAndPriority {
+			cols := make([]string, 0, len(colMap))
+			for colName := range colMap {
+				cols = append(cols, colName)
+			}
+			for i := 0; i < len(cols); i++ {
+				for j := i + 1; j < len(cols); j++ {
+					if colMap[cols[i]] < colMap[cols[j]] {
+						// Swap to maintain priority order
+						cols[i], cols[j] = cols[j], cols[i]
+					}
+				}
+			}
+			indexs = append(indexs, NewTableIndex(t, idxName, cols, false))
+		}
+	}
+	t.indexes = indexs
+	return nil
+}
+
+func (t *Table) constructConstraints() error {
+	// This function is a placeholder for future implementation of foreign key constraints
+	// Currently, it does nothing but can be extended later
+	return nil
 }

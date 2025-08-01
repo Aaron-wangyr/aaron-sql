@@ -18,6 +18,7 @@ type DBInterface interface {
 	GetDB() *DataBase
 	// GetTables returns the DDL information for all tables in the database.
 	GetTables() ([]Table, error)
+	GetTableDDL(tableName string) (*Table, error)
 
 	GetCreateTableSQL(tableName string, columns []ColumnInterface) string
 
@@ -31,12 +32,13 @@ type DBInterface interface {
 	CanInsertOrUpdate() bool
 	CanUpdate() bool
 	CanReturnRowsAffected() bool
+	CanRenameTable() bool
 
 	InsertSqlTemplate() string
 	UpdateSqlTemplate() string
 	InsertOrUpdateSqlTemplate() string
 
-	TableSync(table TableInterface) error
+	
 }
 
 type DataBase struct {
