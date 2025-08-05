@@ -29,9 +29,7 @@ type TableInterface interface {
 	GetExtra() map[string]string
 	SetExtra(kvdata map[string]string)
 
-	GetDDL() string
-	SyncSql() []string
-	Sync()
+	Sync() error
 }
 
 type Table struct {
@@ -104,12 +102,74 @@ func (t *Table) DropForeignKeySql() string {
 	return ""
 }
 
-func (t *Table) SyncSql() []string {
-	return nil
-}
+// Sync synchronizes the table structure by Table.Only do the create or update operation, non destructive.
+func (t *Table) Sync() error {
+	existTable, err := t.db.GetTableDDL(t.name)
+	if err != nil {
+		return fmt.Errorf("failed to get DDL for table %s: %w", t.name, err)
+	}
+	if existTable == nil {
+		// Table does not exist, create it
+		createSQL := t.db.GetCreateTableSQL(t.name, t.columns)
+		if createSQL == "" {
+			return fmt.Errorf("failed to generate CREATE TABLE SQL for table %s", t.name)
+		}
 
-func (t *Table) Sync() {
-	t.db.getta
+		// Execute the CREATE TABLE statement
+		_, err := t.db.GetDB().db.Exec(createSQL)
+		if err != nil {
+			return fmt.Errorf("failed to create table %s: %w", t.name, err)
+		}
+
+		// Create indexes if any
+		createIndexSQLTemplate := t.db.CreateIndexSqlTemplate()
+		for _, index := range t.indexes {
+			indexSQL := strings.ReplaceAll(createIndexSQLTemplate, "{{.IndexName}}", index.Name())
+			indexSQL = strings.ReplaceAll(indexSQL, "{{.TableName}}", t.name)
+			indexSQL = strings.ReplaceAll(indexSQL, "{{.Columns}}", strings.Join(index.columns, ", "))
+			if indexSQL != "" {
+				_, err := t.db.GetDB().db.Exec(indexSQL)
+				if err != nil {
+					return fmt.Errorf("failed to create index %s for table %s: %w", index.Name(), t.name, err)
+				}
+			}
+		}
+	} else {
+		// Table exists, check for column differences and add missing columns
+		existingCols := existTable.Columns()
+		existingColNames := make(map[string]bool)
+		for _, col := range existingCols {
+			existingColNames[col.Name()] = true
+		}
+
+		// Add missing columns
+		for _, newCol := range t.columns {
+			if !existingColNames[newCol.Name()] {
+				colSQL := t.db.CreateColumnSqlTemplate()
+			}
+		}
+
+		// Create missing indexes
+		existingIndexes := existTable.Indexes()
+		existingIndexNames := make(map[string]bool)
+		for _, idx := range existingIndexes {
+			existingIndexNames[idx.Name()] = true
+		}
+
+		for _, newIndex := range t.indexes {
+			if !existingIndexNames[newIndex.Name()] {
+				indexSQL := newIndex.CreateSQL()
+				if indexSQL != "" {
+					_, err := t.db.GetDB().db.Exec(indexSQL)
+					if err != nil {
+						return fmt.Errorf("failed to create index %s for table %s: %w", newIndex.Name(), t.name, err)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func (t *Table) DataBase() *DataBase {

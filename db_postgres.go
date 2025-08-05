@@ -325,3 +325,20 @@ func (postgres *PostgresDataBase) getColumnInfo(tableName string) ([]ColumnInter
 	}
 	return columns, nil
 }
+
+func (postgres *PostgresDataBase) CreateIndexSqlTemplate() string {
+	return "CREATE INDEX IF NOT EXISTS {{.IndexName}} ON {{.TableName}} ({{.Columns}});"
+}
+
+func (postgres *PostgresDataBase) DropIndexSqlTemplate() string {
+	return "DROP INDEX IF EXISTS {{.IndexName}};"
+}
+
+func (postgres *PostgresDataBase) CreateColumnSqlTemplate() string {
+	return "ALTER TABLE {{.TableName}} ADD COLUMN {{.ColumnName}} {{.ColumnType}};"
+}
+
+func (postgres *PostgresDataBase) UpdateColumnSqlTemplate() string {
+	return "ALTER TABLE {{.TableName}} ALTER COLUMN {{.ColumnName}} SET DATA TYPE {{.ColumnType}};"
+}
+

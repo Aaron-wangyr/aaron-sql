@@ -38,7 +38,11 @@ type DBInterface interface {
 	UpdateSqlTemplate() string
 	InsertOrUpdateSqlTemplate() string
 
-	
+	CreateIndexSqlTemplate() string
+	DropIndexSqlTemplate() string
+
+	CreateColumnSqlTemplate() string
+	UpdateColumnSqlTemplate() string
 }
 
 type DataBase struct {
