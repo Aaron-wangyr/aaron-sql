@@ -37,10 +37,6 @@ func (i *TableIndex) Name() string {
 	return idxName
 }
 
-func (i *TableIndex) clone(table TableInterface) TableIndex {
-	return NewTableIndex(table, "", i.columns, i.isUnique)
-}
-
 func (i *TableIndex) IsIdentical(columns ...string) bool {
 	if len(i.columns) != len(columns) {
 		return false
@@ -60,4 +56,8 @@ func (i *TableIndex) QuotedColumns(quoteStr string) []string {
 		ret[j] = fmt.Sprintf("%s%s%s", quoteStr, i.columns[j], quoteStr)
 	}
 	return ret
+}
+
+func (i *TableIndex) IsUnique() bool {
+	return i.isUnique
 }

@@ -11,7 +11,6 @@ import (
 type TableInterface interface {
 	// Insert inserts a new record into the table.
 	Insert(dst interface{}) error
-	InsertOrUpdate(dst interface{}) error
 	Update(dst interface{}, updateFunc func() error) error
 
 	ConstructType() reflect.Type
@@ -53,14 +52,239 @@ func (t *Table) Insert(dst interface{}) error {
 	if !t.db.CanInsert() {
 		return fmt.Errorf("insert operation is not supported for database: %s", t.db.Name())
 	}
-}
 
-func (t *Table) InsertOrUpdate(dst interface{}) error {
-	panic("not implemented") // TODO: Implement
+	// Use reflection to get values from the struct
+	reflectValue := reflect.ValueOf(dst)
+	if reflectValue.Kind() == reflect.Ptr {
+		reflectValue = reflectValue.Elem()
+	}
+	if reflectValue.Kind() != reflect.Struct {
+		return fmt.Errorf("expected a struct or pointer to struct, got: %s", reflectValue.Kind().String())
+	}
+
+	// Build column names and values for INSERT
+	var columnNames []string
+	var placeholders []string
+	var values []interface{}
+	placeholderIndex := 1
+
+	for _, col := range t.columns {
+		// Skip auto-increment columns for insert
+		if col.IsAutoIncrement() {
+			continue
+		}
+
+		// Get field value by column name
+		fieldValue := reflectValue.FieldByName(col.Name())
+		if !fieldValue.IsValid() {
+			// Try to find field by struct tag name
+			found := false
+			for i := 0; i < reflectValue.NumField(); i++ {
+				field := reflectValue.Type().Field(i)
+				tagStr := field.Tag.Get(defaultModelDBTagKey)
+				if tagStr != "" {
+					tags := parseTagString(tagStr)
+					if nameTag, ok := tags[TAG_NAME]; ok && nameTag == col.Name() {
+						fieldValue = reflectValue.Field(i)
+						found = true
+						break
+					}
+				}
+				// If no name tag, check if field name matches column name
+				if !found && field.Name == col.Name() {
+					fieldValue = reflectValue.Field(i)
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue // Skip if field not found
+			}
+		}
+
+		columnNames = append(columnNames, col.Name())
+
+		// Handle different database placeholder styles
+		if t.db.Name() == PostgresDB {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", placeholderIndex))
+			placeholderIndex++
+		} else {
+			placeholders = append(placeholders, "?")
+		}
+
+		// Convert value using column's conversion method
+		sqlValue := col.ConvertFromValueToSQL(fieldValue.Interface())
+		values = append(values, sqlValue)
+	}
+
+	if len(columnNames) == 0 {
+		return fmt.Errorf("no columns to insert")
+	}
+
+	// Build and execute INSERT SQL
+	insertSQL := t.db.InsertSqlTemplate()
+	insertSQL = strings.ReplaceAll(insertSQL, "{{.TableName}}", t.name)
+	insertSQL = strings.ReplaceAll(insertSQL, "{{.Columns}}", strings.Join(columnNames, ", "))
+	insertSQL = strings.ReplaceAll(insertSQL, "{{.Values}}", strings.Join(placeholders, ", "))
+
+	_, err := t.db.GetDB().db.Exec(insertSQL, values...)
+	if err != nil {
+		return fmt.Errorf("failed to insert into table %s: %w", t.name, err)
+	}
+
+	return nil
 }
 
 func (t *Table) Update(dst interface{}, updateFunc func() error) error {
-	panic("not implemented") // TODO: Implement
+	if !t.db.CanUpdate() {
+		return fmt.Errorf("update operation is not supported for database: %s", t.db.Name())
+	}
+
+	// Execute the update function first if provided
+	if updateFunc != nil {
+		if err := updateFunc(); err != nil {
+			return fmt.Errorf("update function failed: %w", err)
+		}
+	}
+
+	// Use reflection to get values from the struct
+	reflectValue := reflect.ValueOf(dst)
+	if reflectValue.Kind() == reflect.Ptr {
+		reflectValue = reflectValue.Elem()
+	}
+	if reflectValue.Kind() != reflect.Struct {
+		return fmt.Errorf("expected a struct or pointer to struct, got: %s", reflectValue.Kind().String())
+	}
+
+	// Build update clauses and where conditions
+	var updateClauses []string
+	var whereConditions []string
+	var values []interface{}
+	placeholderIndex := 1
+
+	// Get primary key columns for WHERE clause
+	primaryCols := t.PrimaryColumns()
+	if len(primaryCols) == 0 {
+		return fmt.Errorf("no primary key columns found for update operation")
+	}
+
+	// Build SET clauses for non-primary key columns
+	for _, col := range t.columns {
+		if col.IsPrimaryKey() || col.IsAutoIncrement() {
+			continue // Skip primary keys and auto-increment columns in SET clause
+		}
+
+		// Get field value by column name
+		fieldValue := reflectValue.FieldByName(col.Name())
+		if !fieldValue.IsValid() {
+			// Try to find field by struct tag name
+			found := false
+			for i := 0; i < reflectValue.NumField(); i++ {
+				field := reflectValue.Type().Field(i)
+				tagStr := field.Tag.Get(defaultModelDBTagKey)
+				if tagStr != "" {
+					tags := parseTagString(tagStr)
+					if nameTag, ok := tags[TAG_NAME]; ok && nameTag == col.Name() {
+						fieldValue = reflectValue.Field(i)
+						found = true
+						break
+					}
+				}
+				// If no name tag, check if field name matches column name
+				if !found && field.Name == col.Name() {
+					fieldValue = reflectValue.Field(i)
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue // Skip if field not found
+			}
+		}
+
+		// Handle different database placeholder styles
+		if t.db.Name() == PostgresDB {
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = $%d", col.Name(), placeholderIndex))
+			placeholderIndex++
+		} else {
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = ?", col.Name()))
+		}
+
+		// Convert value using column's conversion method
+		sqlValue := col.ConvertFromValueToSQL(fieldValue.Interface())
+		values = append(values, sqlValue)
+	}
+
+	// Build WHERE clause using primary key columns
+	for _, col := range primaryCols {
+		// Get field value by column name
+		fieldValue := reflectValue.FieldByName(col.Name())
+		if !fieldValue.IsValid() {
+			// Try to find field by struct tag name
+			found := false
+			for i := 0; i < reflectValue.NumField(); i++ {
+				field := reflectValue.Type().Field(i)
+				tagStr := field.Tag.Get(defaultModelDBTagKey)
+				if tagStr != "" {
+					tags := parseTagString(tagStr)
+					if nameTag, ok := tags[TAG_NAME]; ok && nameTag == col.Name() {
+						fieldValue = reflectValue.Field(i)
+						found = true
+						break
+					}
+				}
+				// If no name tag, check if field name matches column name
+				if !found && field.Name == col.Name() {
+					fieldValue = reflectValue.Field(i)
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("primary key field %s not found in struct", col.Name())
+			}
+		}
+
+		// Handle different database placeholder styles
+		if t.db.Name() == PostgresDB {
+			whereConditions = append(whereConditions, fmt.Sprintf("%s = $%d", col.Name(), placeholderIndex))
+			placeholderIndex++
+		} else {
+			whereConditions = append(whereConditions, fmt.Sprintf("%s = ?", col.Name()))
+		}
+
+		// Convert value using column's conversion method
+		sqlValue := col.ConvertFromValueToSQL(fieldValue.Interface())
+		values = append(values, sqlValue)
+	}
+
+	if len(updateClauses) == 0 {
+		return fmt.Errorf("no columns to update")
+	}
+
+	// Build and execute UPDATE SQL
+	updateSQL := t.db.UpdateSqlTemplate()
+	updateSQL = strings.ReplaceAll(updateSQL, "{{.TableName}}", t.name)
+	updateSQL = strings.ReplaceAll(updateSQL, "{{.Updates}}", strings.Join(updateClauses, ", "))
+	updateSQL = strings.ReplaceAll(updateSQL, "{{.Conditions}}", strings.Join(whereConditions, " AND "))
+
+	result, err := t.db.GetDB().db.Exec(updateSQL, values...)
+	if err != nil {
+		return fmt.Errorf("failed to update table %s: %w", t.name, err)
+	}
+
+	// Check if any rows were affected
+	if t.db.CanReturnRowsAffected() {
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no rows were updated")
+		}
+	}
+
+	return nil
 }
 
 func (t *Table) ConstructType() reflect.Type {
@@ -124,7 +348,14 @@ func (t *Table) Sync() error {
 		// Create indexes if any
 		createIndexSQLTemplate := t.db.CreateIndexSqlTemplate()
 		for _, index := range t.indexes {
-			indexSQL := strings.ReplaceAll(createIndexSQLTemplate, "{{.IndexName}}", index.Name())
+			var indexSQL string
+			if index.IsUnique() {
+				// For unique indexes, we need to use CREATE UNIQUE INDEX
+				indexSQL = strings.ReplaceAll(createIndexSQLTemplate, "CREATE INDEX", "CREATE UNIQUE INDEX")
+			} else {
+				indexSQL = createIndexSQLTemplate
+			}
+			indexSQL = strings.ReplaceAll(indexSQL, "{{.IndexName}}", index.Name())
 			indexSQL = strings.ReplaceAll(indexSQL, "{{.TableName}}", t.name)
 			indexSQL = strings.ReplaceAll(indexSQL, "{{.Columns}}", strings.Join(index.columns, ", "))
 			if indexSQL != "" {
@@ -142,27 +373,122 @@ func (t *Table) Sync() error {
 			existingColNames[col.Name()] = true
 		}
 
-		// Add missing columns
+		// Add missing columns and update existing ones if they differ
 		for _, newCol := range t.columns {
-			if !existingColNames[newCol.Name()] {
-				colSQL := t.db.CreateColumnSqlTemplate()
+			colExists := false
+			var existingCol ColumnInterface
+
+			// Find existing column (case-insensitive for PostgreSQL, case-sensitive for others)
+			for _, col := range existingCols {
+				if t.db.Name() == PostgresDB {
+					// PostgreSQL is case-insensitive, compare lowercase
+					if strings.EqualFold(col.Name(), newCol.Name()) {
+						colExists = true
+						existingCol = col
+						break
+					}
+				} else {
+					// Other databases (MariaDB) are case-sensitive
+					if col.Name() == newCol.Name() {
+						colExists = true
+						existingCol = col
+						break
+					}
+				}
 			}
-		}
 
-		// Create missing indexes
-		existingIndexes := existTable.Indexes()
-		existingIndexNames := make(map[string]bool)
-		for _, idx := range existingIndexes {
-			existingIndexNames[idx.Name()] = true
-		}
-
-		for _, newIndex := range t.indexes {
-			if !existingIndexNames[newIndex.Name()] {
-				indexSQL := newIndex.CreateSQL()
-				if indexSQL != "" {
-					_, err := t.db.GetDB().db.Exec(indexSQL)
+			if !colExists {
+				// Column doesn't exist, add it
+				colSQL := t.db.CreateColumnSqlTemplate()
+				colSQL = strings.ReplaceAll(colSQL, "{{.ColumnName}}", newCol.Name())
+				colSQL = strings.ReplaceAll(colSQL, "{{.ColumnType}}", newCol.Type())
+				colSQL = strings.ReplaceAll(colSQL, "{{.TableName}}", t.name)
+				if colSQL != "" {
+					_, err := t.db.GetDB().db.Exec(colSQL)
 					if err != nil {
-						return fmt.Errorf("failed to create index %s for table %s: %w", newIndex.Name(), t.name, err)
+						return fmt.Errorf("failed to add column %s to table %s: %w", newCol.Name(), t.name, err)
+					}
+				}
+			} else {
+				// Column exists, check if it needs to be updated
+				if existingCol != nil {
+					// Compare column definitions
+					if existingCol.Type() != newCol.Type() ||
+						existingCol.Nullable() != newCol.Nullable() ||
+						existingCol.Default() != newCol.Default() {
+						// Column definition differs, update it
+						updateSQL := t.db.UpdateColumnSqlTemplate()
+						updateSQL = strings.ReplaceAll(updateSQL, "{{.ColumnName}}", newCol.Name())
+						updateSQL = strings.ReplaceAll(updateSQL, "{{.ColumnType}}", newCol.Type())
+						updateSQL = strings.ReplaceAll(updateSQL, "{{.TableName}}", t.name)
+
+						if updateSQL != "" {
+							_, err := t.db.GetDB().db.Exec(updateSQL)
+							if err != nil {
+								return fmt.Errorf("failed to update column %s in table %s: %w", newCol.Name(), t.name, err)
+							}
+						}
+					}
+				}
+			} // Create missing indexes and update existing ones if they differ
+			existingIndexes := existTable.Indexes()
+			existingIndexMap := make(map[string]TableIndex)
+			for _, idx := range existingIndexes {
+				existingIndexMap[idx.Name()] = idx
+			}
+
+			for _, newIndex := range t.indexes {
+				if existingIdx, exists := existingIndexMap[newIndex.Name()]; !exists {
+					// Index doesn't exist, create it
+					var indexSQL string
+					if newIndex.IsUnique() {
+						// For unique indexes, we need to use CREATE UNIQUE INDEX
+						indexSQL = strings.ReplaceAll(t.db.CreateIndexSqlTemplate(), "CREATE INDEX", "CREATE UNIQUE INDEX")
+					} else {
+						indexSQL = t.db.CreateIndexSqlTemplate()
+					}
+					indexSQL = strings.ReplaceAll(indexSQL, "{{.IndexName}}", newIndex.Name())
+					indexSQL = strings.ReplaceAll(indexSQL, "{{.TableName}}", t.name)
+					indexSQL = strings.ReplaceAll(indexSQL, "{{.Columns}}", strings.Join(newIndex.columns, ", "))
+					if indexSQL != "" {
+						_, err := t.db.GetDB().db.Exec(indexSQL)
+						if err != nil {
+							return fmt.Errorf("failed to create index %s for table %s: %w", newIndex.Name(), t.name, err)
+						}
+					}
+				} else {
+					// Index exists, check if it matches the current definition
+					if !existingIdx.IsIdentical(newIndex.columns...) || existingIdx.isUnique != newIndex.isUnique {
+						// Index definition differs, drop and recreate it
+						dropIndexSQL := t.db.DropIndexSqlTemplate()
+						dropIndexSQL = strings.ReplaceAll(dropIndexSQL, "{{.IndexName}}", existingIdx.Name())
+						dropIndexSQL = strings.ReplaceAll(dropIndexSQL, "{{.TableName}}", t.name)
+
+						if dropIndexSQL != "" {
+							_, err := t.db.GetDB().db.Exec(dropIndexSQL)
+							if err != nil {
+								return fmt.Errorf("failed to drop index %s for table %s: %w", existingIdx.Name(), t.name, err)
+							}
+						}
+
+						// Recreate the index with new definition
+						var createIndexSQL string
+						if newIndex.IsUnique() {
+							// For unique indexes, we need to use CREATE UNIQUE INDEX
+							createIndexSQL = strings.ReplaceAll(t.db.CreateIndexSqlTemplate(), "CREATE INDEX", "CREATE UNIQUE INDEX")
+						} else {
+							createIndexSQL = t.db.CreateIndexSqlTemplate()
+						}
+						createIndexSQL = strings.ReplaceAll(createIndexSQL, "{{.IndexName}}", newIndex.Name())
+						createIndexSQL = strings.ReplaceAll(createIndexSQL, "{{.TableName}}", t.name)
+						createIndexSQL = strings.ReplaceAll(createIndexSQL, "{{.Columns}}", strings.Join(newIndex.columns, ", "))
+
+						if createIndexSQL != "" {
+							_, err := t.db.GetDB().db.Exec(createIndexSQL)
+							if err != nil {
+								return fmt.Errorf("failed to recreate index %s for table %s: %w", newIndex.Name(), t.name, err)
+							}
+						}
 					}
 				}
 			}
@@ -177,15 +503,39 @@ func (t *Table) DataBase() *DataBase {
 }
 
 func (t *Table) Drop() error {
-	panic("not implemented") // TODO: Implement
+	dropSQL := t.db.DropTableSql(t.name)
+	if dropSQL == "" {
+		return fmt.Errorf("drop table SQL not supported for database: %s", t.db.Name())
+	}
+
+	_, err := t.db.GetDB().db.Exec(dropSQL)
+	if err != nil {
+		return fmt.Errorf("failed to drop table %s: %w", t.name, err)
+	}
+
+	return nil
 }
 
 func (t *Table) GetExtra() map[string]string {
-	panic("not implemented") // TODO: Implement
+	if t.extraOptions == nil {
+		t.extraOptions = make(map[string]string)
+	}
+	// Return a copy to prevent external modification
+	result := make(map[string]string)
+	for k, v := range t.extraOptions {
+		result[k] = v
+	}
+	return result
 }
 
 func (t *Table) SetExtra(kvdata map[string]string) {
-	panic("not implemented") // TODO: Implement
+	if t.extraOptions == nil {
+		t.extraOptions = make(map[string]string)
+	}
+	// Copy the provided data to prevent external modification
+	for k, v := range kvdata {
+		t.extraOptions[k] = v
+	}
 }
 
 func NewTableFromStructWithDB(s interface{}, name string, dbName string) (*Table, error) {
@@ -200,13 +550,12 @@ func NewTableFromStructWithDB(s interface{}, name string, dbName string) (*Table
 	// get s tags
 	cols := make([]ColumnInterface, 0)
 	for i := 0; i < reflectType.NumField(); i++ {
-		tags := make(map[string]string)
 		field := reflectType.Field(i)
 		tagStr := field.Tag.Get(defaultModelDBTagKey)
 		if tagStr == "" {
 			continue
 		}
-		tags = parseTagString(tagStr)
+		tags := parseTagString(tagStr)
 		if _, ok := tags[TAG_IGNORE]; ok {
 			continue // skip fields with ignore tag
 		}

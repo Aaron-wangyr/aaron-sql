@@ -3,6 +3,7 @@ package aaronsql
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -49,12 +50,36 @@ func (postgres *PostgresDataBase) GetTables() ([]Table, error) {
 
 func (postgres *PostgresDataBase) GetCreateTableSQL(tableName string, columns []ColumnInterface) string {
 	sql := fmt.Sprintf("CREATE TABLE %s (", tableName)
+	var primaryKeys []string
+	
 	for i, col := range columns {
 		sql += fmt.Sprintf("%s %s", col.Name(), col.Type())
+		
+		// Add NOT NULL if the column is not nullable
+		if !col.Nullable() {
+			sql += " NOT NULL"
+		}
+		
+		// Add DEFAULT if specified
+		if col.Default() != "" {
+			sql += fmt.Sprintf(" DEFAULT %s", col.Default())
+		}
+		
+		// Collect primary key columns
+		if col.IsPrimaryKey() {
+			primaryKeys = append(primaryKeys, col.Name())
+		}
+		
 		if i < len(columns)-1 {
 			sql += ", "
 		}
 	}
+	
+	// Add primary key constraint if any
+	if len(primaryKeys) > 0 {
+		sql += fmt.Sprintf(", PRIMARY KEY (%s)", strings.Join(primaryKeys, ", "))
+	}
+	
 	sql += ");"
 	return sql
 }
@@ -137,34 +162,34 @@ func (postgres *PostgresDataBase) GetColumnDefinitionByType(fieldType reflect.Ty
 	} else {
 		retCol.defaultString = ""
 	}
-	if nullable, ok := tag["nullable"]; ok && nullable == "true" {
+	if nullable, ok := tag[TAG_NULLABLE]; ok && (nullable == "" || nullable == "true" || nullable == "1") {
 		retCol.isNullable = true
 	} else {
 		retCol.isNullable = false
 	}
-	if primaryKey, ok := tag["primary_key"]; ok && primaryKey == "true" {
+	if primaryKey, ok := tag[TAG_PRIMARY]; ok && (primaryKey == "" || primaryKey == "true" || primaryKey == "1") {
 		retCol.isPrimaryKey = true
 	} else {
 		retCol.isPrimaryKey = false
 	}
-	if unique, ok := tag["unique"]; ok && unique == "true" {
+	if unique, ok := tag[TAG_UNIQUE]; ok && (unique == "" || unique == "true" || unique == "1") {
 		retCol.isUnique = true
 	} else {
 		retCol.isUnique = false
 	}
-	if index, ok := tag["index"]; ok && index == "true" {
+	if index, ok := tag[TAG_INDEX]; ok && (index == "" || index == "true" || index == "1") {
 		retCol.isIndex = true
 	} else {
 		retCol.isIndex = false
 	}
-	if allowZero, ok := tag["allow_zero"]; ok && allowZero == "true" {
+	if allowZero, ok := tag[TAG_ALLOW_ZERO]; ok && (allowZero == "" || allowZero == "true" || allowZero == "1") {
 		retCol.isAllowZero = true
 	} else {
 		retCol.isAllowZero = false
 	}
 	retCol.tags = tag
 	retCol.columnIndex = -1 // Default value, can be set later if needed
-	if name, ok := tag["name"]; ok {
+	if name, ok := tag[TAG_NAME]; ok {
 		retCol.name = name
 	} else {
 		retCol.name = columnName
@@ -233,16 +258,24 @@ func (postgres *PostgresDataBase) GetTableDDL(tableName string) (*Table, error) 
 		ORDER BY
 			ordinal_position;
 	`
-	rows, err := postgres.db.Query(columnQuery, tableName)
+	rows, err := postgres.db.Query(columnQuery, "public", tableName)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	for rows.Next() {
-		var colName, dataType, isNullable, defaultValue string
+		var colName, dataType, isNullable string
+		var defaultValue *string
 		if err := rows.Scan(&colName, &dataType, &isNullable, &defaultValue); err != nil {
 			return nil, err
+		}
+
+		defaultStr := ""
+		if defaultValue != nil {
+			defaultStr = *defaultValue
 		}
 
 		column := &PostgresColumn{
@@ -250,7 +283,7 @@ func (postgres *PostgresDataBase) GetTableDDL(tableName string) (*Table, error) 
 				name:          colName,
 				sqlType:       dataType,
 				isNullable:    isNullable == "YES",
-				defaultString: defaultValue,
+				defaultString: defaultStr,
 			},
 		}
 		columnMap[colName] = column
@@ -259,7 +292,7 @@ func (postgres *PostgresDataBase) GetTableDDL(tableName string) (*Table, error) 
 		return nil, err
 	}
 	if len(columnMap) == 0 {
-		return nil, fmt.Errorf("no columns found for table %s", tableName)
+		return nil, nil // Table doesn't exist
 	}
 
 	table.columns = make([]ColumnInterface, 0, len(columnMap))
@@ -279,7 +312,9 @@ func (postgres *PostgresDataBase) getTableNames() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var tables []string
 	for rows.Next() {
@@ -303,7 +338,9 @@ func (postgres *PostgresDataBase) getColumnInfo(tableName string) ([]ColumnInter
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var columns []ColumnInterface
 	for rows.Next() {

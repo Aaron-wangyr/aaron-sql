@@ -162,7 +162,6 @@ func (c *BaseColumn) IsAutoIncrement() bool {
 
 // SetAutoIncrement sets whether the column is auto-incrementing
 func (c *BaseColumn) SetAutoIncrement(isAutoIncrement bool) {
-	return
 }
 
 // AutoIncrementOffset returns the auto-increment offset
@@ -172,7 +171,6 @@ func (c *BaseColumn) AutoIncrementOffset() int64 {
 
 // SetAutoIncrementOffset sets the auto-increment offset
 func (c *BaseColumn) SetAutoIncrementOffset(offset int64) {
-	return
 }
 
 // IsPointer returns whether the column is a pointer type
@@ -258,18 +256,30 @@ func NewBaseColumn(name string, sqltype string, tagmap map[string]string, isPoin
 	}
 	isPrimaryKey := false
 	if v, ok = tagmap[TAG_PRIMARY]; ok {
-		b, _ := strconv.ParseBool(v)
-		isPrimaryKey = b
+		if v == "" || v == "true" || v == "1" {
+			isPrimaryKey = true
+		} else {
+			b, _ := strconv.ParseBool(v)
+			isPrimaryKey = b
+		}
 	}
 	isUnique := false
 	if v, ok = tagmap[TAG_UNIQUE]; ok {
-		b, _ := strconv.ParseBool(v)
-		isUnique = b
+		if v == "" || v == "true" || v == "1" {
+			isUnique = true
+		} else {
+			b, _ := strconv.ParseBool(v)
+			isUnique = b
+		}
 	}
 	isIndex := false
 	if v, ok = tagmap[TAG_INDEX]; ok {
-		b, _ := strconv.ParseBool(v)
-		isIndex = b
+		if v == "" || v == "true" || v == "1" {
+			isIndex = true
+		} else {
+			b, _ := strconv.ParseBool(v)
+			isIndex = b
+		}
 	}
 	if isPrimaryKey {
 		// If the column is a primary key, it cannot be nullable
@@ -277,8 +287,12 @@ func NewBaseColumn(name string, sqltype string, tagmap map[string]string, isPoin
 	}
 	isAllowZero := false
 	if v, ok = tagmap[TAG_ALLOW_ZERO]; ok {
-		b, _ := strconv.ParseBool(v)
-		isAllowZero = b
+		if v == "" || v == "true" || v == "1" {
+			isAllowZero = true
+		} else {
+			b, _ := strconv.ParseBool(v)
+			isAllowZero = b
+		}
 	}
 	return BaseColumn{
 		name:          name,

@@ -9,6 +9,7 @@ type DBName string
 
 const (
 	PostgresDB DBName = "postgres"
+	MariaDB    DBName = "mariadb"
 )
 
 type DBInterface interface {
@@ -36,7 +37,6 @@ type DBInterface interface {
 
 	InsertSqlTemplate() string
 	UpdateSqlTemplate() string
-	InsertOrUpdateSqlTemplate() string
 
 	CreateIndexSqlTemplate() string
 	DropIndexSqlTemplate() string
